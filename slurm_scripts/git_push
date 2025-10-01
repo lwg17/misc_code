@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# git_push <file> <repo[/subdir]>
+
+set -euo pipefail
+
+FILE="${1:-}"
+TARGET="${2:-misc_code}"
+
+if [[ -z "$FILE" ]]; then
+  echo "Usage: git_push <file> <repository[/subdir]>"
+  exit 1
+fi
+
+# Split into repo name and optional subpath
+REPO="${TARGET%%/*}"
+SUBDIR="${TARGET#*/}"
+[ "$REPO" = "$SUBDIR" ] && SUBDIR=""
+
+REPO_PATH="$HOME/$REPO"
+DEST="$REPO_PATH"
+[ -n "$SUBDIR" ] && DEST="$REPO_PATH/$SUBDIR"
+
+if [[ ! -d "$REPO_PATH/.git" ]]; then
+  echo "Error: $REPO_PATH is not a git repository"
+  exit 2
+fi
+
+mkdir -p "$DEST"
+cp "$FILE" "$DEST/"
+
+cd "$REPO_PATH"
+git add "$([ -n "$SUBDIR" ] && echo "$SUBDIR/")$(basename "$FILE")"
+git commit -m "Update ${SUBDIR:+$SUBDIR/}$(basename "$FILE")"
+git pull --rebase origin main || true
+git push origin main
+
+echo "✅ Pushed $(basename "$FILE") to $TARGET (main)"
