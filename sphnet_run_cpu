@@ -1,0 +1,89 @@
+#!/bin/bash
+# SLURM submit wrapper for Python jobs using the 'sphnet' conda env.
+# Usage:
+#   sphnet_run_cpu <path/to/script.py> [args...]
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <python_script.py> [args...]"
+  exit 1
+fi
+
+SCRIPT="$1"; shift || true
+if [ ! -f "$SCRIPT" ]; then
+  echo "Error: '$SCRIPT' not found."
+  exit 2
+fi
+
+PARTITION="${PARTITION:-main}"
+CPUS="${CPUS:-1}"
+MEM="${MEM:-128G}"
+TIME="${TIME:-72:00:00}"
+MAIL="${MAIL:-lwg17@scarletmail.rutgers.edu}"
+
+JOBNAME="$(basename "${SCRIPT%.*}")"
+LOG="${JOBNAME}_%j.out"
+
+# Compute absolute path to the script safely (no stray executions)
+ABS_SCRIPT="$(python -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$SCRIPT")"
+
+# Capture and escape user args safely
+if [ $# -gt 0 ]; then
+  printf -v ARGS_STR "%q " "$@"
+else
+  ARGS_STR=""
+fi
+
+BATCH_FILE="$(mktemp -t sphnet_py_XXXXXX.slurm)"
+cat > "$BATCH_FILE" <<SLURM
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=${CPUS}
+#SBATCH --mem=${MEM}
+#SBATCH --time=${TIME}
+#SBATCH --partition=${PARTITION}
+#SBATCH --job-name=${JOBNAME}
+#SBATCH --output=${LOG}
+#SBATCH --mail-user=${MAIL}
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --requeue
+
+set -euo pipefail
+
+# Robust conda activation (no modules assumed)
+if [ -f "\$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+  source "\$HOME/miniconda3/etc/profile.d/conda.sh"
+elif [ -f "\$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+  source "\$HOME/anaconda3/etc/profile.d/conda.sh"
+elif command -v conda >/dev/null 2>&1; then
+  eval "\$(conda shell.bash hook)"
+else
+  echo "[ERR] Could not find conda.sh (miniconda3/anaconda3). Install or load conda first." >&2
+  exit 3
+fi
+
+conda activate sphnet || { echo "[ERR] Failed to conda activate 'sphnet'." >&2; exit 4; }
+
+export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+export MKL_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+
+trap 'echo "[INFO] SIGTERM received; requeuing \$SLURM_JOB_ID"; scontrol requeue \$SLURM_JOB_ID; exit 0' TERM
+
+cd /scratch/lwg17/SPHNet_repro/SPHNet/pipelines
+
+echo "[INFO] Host: \$(hostname)"
+echo "[INFO] Python: \$(python -V)"
+python - <<'PY' || true
+import torch, sys
+print("[INFO] Torch:", getattr(torch, "__version__", "not found"))
+PY
+
+srun python "${ABS_SCRIPT}" ${ARGS_STR}
+SLURM
+
+JOB_SUBMIT_OUT="$(sbatch "$BATCH_FILE")"
+JOB_ID="$(echo "$JOB_SUBMIT_OUT" | awk '{print $4}')"
+echo "$JOB_SUBMIT_OUT"
+echo "Submitted ${JOBNAME} as JobID ${JOB_ID}. Logs: ${LOG}"
