@@ -1,0 +1,69 @@
+#!/bin/bash
+# Save current working directory and user info
+work_dir=$(pwd)
+user_name=$(whoami)
+
+# Validate input: ensure a Python script is provided
+if [ -z "$1" ]; then
+  echo "Usage: $0 <python_script.py>"
+  exit 1
+fi
+
+script=$1
+if [ ! -f "$script" ]; then
+  echo "Error: '$script' not found in $work_dir"
+  exit 2
+fi
+
+script_base=$(basename "$script" .py)
+
+# Submit job and capture SLURM message and job ID
+job_output=$(sbatch << EOF
+#!/bin/bash
+#SBATCH --partition=main
+#SBATCH --job-name=GPAW
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=16000
+#SBATCH --time=72:00:00
+#SBATCH --output=${script_base}_slurm.out
+#SBATCH --error=${script_base}_slurm.err
+#SBATCH --export=ALL
+#SBATCH --mail-user=lwg17@scarletmail.rutgers.edu
+#SBATCH --mail-type=END
+#SBATCH --requeue
+
+
+# ---- Queue/wait-time logging (single CSV in your home) ----
+export SLURM_QUEUE_LOG="$HOME/slurm_wait_times.csv"
+export LOG_ON_EXIT=1
+source "$HOME/bin/slurm_queue_logger.sh" 2>/dev/null || echo "[warn] logger not found at $HOME/bin/slurm_queue_logger.sh"
+
+
+# Threading limits
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+# Load Python environment
+module purge
+module load python/3.9
+source ~/.bashrc
+conda activate gpaw
+
+# Define job-aware output filename
+output_file="${script_base}_output_\${SLURM_JOB_ID}.txt"
+
+# Run the GPAW script and redirect output
+echo "Running GPAW job for $script..."
+python $script > \$output_file 2>&1
+
+hostname
+EOF
+)
+
+# Extract the job ID and display messages
+jobid=$(echo "$job_output" | awk '{print $4}')
+echo "$job_output"
+echo "Submitted GPAW job for $script. Output will go to: ${script_base}_output_${jobid}.txt"
