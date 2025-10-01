@@ -1,0 +1,156 @@
+#!/bin/bash
+# torchc118_run — Submit a PyTorch (CUDA 11.8) training job on Amarel GPU nodes
+# Usage: torchc118_run <train_script.py> [TRAIN ARGS ...]
+
+# -------- Basics --------
+work_dir=$(pwd)
+user_name=$(whoami)
+
+if [ -z "$1" ]; then
+  echo "Usage: $0 <train_script.py> [TRAIN ARGS ...]"
+  exit 1
+fi
+
+script="$1"; shift
+if [ ! -f "$script" ]; then
+  echo "Error: '$script' not found in $work_dir"
+  exit 1
+fi
+
+# Resolve paths and args
+script_abs="$(readlink -f "$script" 2>/dev/null || realpath "$script")"
+script_base="$(basename "$script_abs" .py)"
+train_dir="$(dirname "$script_abs")"
+train_args="$@"
+
+# -------- Config --------
+CONDA_ENV="torch-cu118"                # CUDA 11.8 environment (hard requirement)
+PARTITION="${PARTITION:-gpu}"
+GPUS="${GPUS:-1}"
+CPUS="${CPUS:-4}"
+MEM="${MEM:-16G}"
+TIME="${TIME:-02:00:00}"
+MAIL_USER="${MAIL_USER:-lwg17@scarletmail.rutgers.edu}"
+MAIL_TYPE="${MAIL_TYPE:-END,FAIL,REQUEUE}"
+
+# Optional override of interpreter
+ENV_PY="${ENV_PY:-}"
+
+log_dir="$train_dir/logs"
+mkdir -p "$log_dir"
+
+# -------- Submit job --------
+sbatch_out=$(sbatch <<EOF
+#!/bin/bash
+#SBATCH -J NN-Train
+#SBATCH -p ${PARTITION}
+#SBATCH --gres=gpu:${GPUS}
+#SBATCH --cpus-per-task=${CPUS}
+#SBATCH --mem=${MEM}
+#SBATCH -t ${TIME}
+#SBATCH -o ${log_dir}/${script_base}-%j.out
+#SBATCH --ntasks=1
+#SBATCH --mail-user=${MAIL_USER}
+#SBATCH --mail-type=${MAIL_TYPE}
+
+set -eo pipefail
+
+# ---- Queue/wait-time logging (single CSV in your home) ----
+export SLURM_QUEUE_LOG="\${HOME}/slurm_wait_times.csv"
+export LOG_ON_EXIT=1
+source "\${HOME}/bin/slurm_queue_logger.sh" 2>/dev/null || echo "[warn] logger not found at \${HOME}/bin/slurm_queue_logger.sh"
+
+# Always cache datasets and model weights alongside the training script
+export TORCH_HOME="${train_dir}"
+mkdir -p "\${TORCH_HOME}"
+
+# Pass-through optional pinned interpreter from submitter
+ENV_PY="${ENV_PY}"
+
+# ----- Locate Python for torch-cu118: prefer ENV_PY, then common paths; else conda run -----
+PY_CMD=()
+if [ -n "\${ENV_PY}" ] && [ -x "\${ENV_PY}" ]; then
+  PY_CMD=( "\${ENV_PY}" )
+elif [ -x "\$HOME/.conda/envs/${CONDA_ENV}/bin/python" ]; then
+  PY_CMD=( "\$HOME/.conda/envs/${CONDA_ENV}/bin/python" )
+elif [ -x "\$HOME/miniconda3/envs/${CONDA_ENV}/bin/python" ]; then
+  PY_CMD=( "\$HOME/miniconda3/envs/${CONDA_ENV}/bin/python" )
+elif [ -x "\$HOME/anaconda3/envs/${CONDA_ENV}/bin/python" ]; then
+  PY_CMD=( "\$HOME/anaconda3/envs/${CONDA_ENV}/bin/python" )
+else
+  if [ -n "\$CONDA_EXE" ] && [ -x "\$CONDA_EXE" ]; then
+    CONDA_BIN="\$CONDA_EXE"
+  elif command -v conda >/dev/null 2>&1; then
+    CONDA_BIN="\$(command -v conda)"
+  elif [ -x "\$HOME/miniconda3/bin/conda" ]; then
+    CONDA_BIN="\$HOME/miniconda3/bin/conda"
+  elif [ -x "\$HOME/anaconda3/bin/conda" ]; then
+    CONDA_BIN="\$HOME/anaconda3/bin/conda"
+  else
+    echo "[ERROR] No Python interpreter resolved (ENV_PY unset/not executable and no conda found)." >&2
+    exit 4
+  fi
+  PY_CMD=( "\$CONDA_BIN" run -n "${CONDA_ENV}" python )
+fi
+
+# Diagnostics
+echo "====[ Job meta ]===="
+echo "User: ${user_name}"
+echo "Host: \$(hostname)"
+echo "Work dir: ${work_dir}"
+echo "Submit dir: \${SLURM_SUBMIT_DIR}"
+echo "Train dir: ${train_dir}"
+echo "Train script: ${script_abs}"
+echo "Train args: ${train_args}"
+echo "Partition: \${SLURM_JOB_PARTITION} | GPUs: \${SLURM_GPUS:-0} | CPUs: \${SLURM_CPUS_PER_TASK:-unset} | Mem/node: \${SLURM_MEM_PER_NODE:-unset}"
+echo "TORCH_HOME: \${TORCH_HOME}"
+echo "Mail: ${MAIL_USER} (${MAIL_TYPE})"
+echo "Interpreter: \${PY_CMD[@]}"
+echo "===================="
+
+# Sanity check for CUDA 11.8
+CHECK_PY="\${SLURM_TMPDIR:-/tmp}/torchc118_check_\${SLURM_JOB_ID:-\$\$}.py"
+cat > "\$CHECK_PY" <<'PY'
+import sys, torch
+print("torch:", torch.__version__)
+print("torch.version.cuda:", torch.version.cuda)
+print("cuda available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("gpu:", torch.cuda.get_device_name(0))
+ok = True
+if torch.version.cuda != "11.8":
+    print("[ERROR] Requires PyTorch built for CUDA 11.8 (got:", torch.version.cuda, ")", file=sys.stderr)
+    ok = False
+if not torch.cuda.is_available():
+    print("[ERROR] CUDA not available inside this job (no GPU?).", file=sys.stderr)
+    ok = False
+sys.exit(0 if ok else 2)
+PY
+
+"\${PY_CMD[@]}" "\$CHECK_PY"
+
+# Optional: safer defaults
+export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_P2P_DISABLE=0
+export OMP_NUM_THREADS=\${SLURM_CPUS_PER_TASK:-1}
+
+# Run the training script
+cd "${train_dir}"
+echo "Starting training with CUDA 11.8 PyTorch..."
+
+"\${PY_CMD[@]}" "${script_abs}" ${train_args}
+status=\$?
+
+# Force a final log write even if EXIT trap was bypassed
+type slurm_log_queue_time >/dev/null 2>&1 && slurm_log_queue_time
+
+exit \$status
+EOF
+) || {
+  echo "ERROR: sbatch submission failed. Check partition/resources." >&2
+  exit 2
+}
+
+jobid=$(echo "$sbatch_out" | awk '{print $4}')
+echo "$sbatch_out"
+exit 0
