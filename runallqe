@@ -1,7 +1,0 @@
-#!/bin/bash
-
-# Loop through all .pwi files in the current directory
-for pwifile in ./*.pwi; do
-    # Submit each job using qe_run_id, which wraps sbatch itself
-    bash qe_run_id "$pwifile"
-done
