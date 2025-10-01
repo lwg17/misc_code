@@ -1,0 +1,65 @@
+#!/home/lwg17/.conda/envs/pyscf/bin/python
+# ^ make sure this matches the output of `which python` in pyscf env
+
+import sys, os, glob
+from ase.io import read, write
+
+USAGE = """\
+Usage:
+  mol2xyz <file.mol> [more.mol ...]
+  mol2xyz <folder>          (converts all *.mol in folder)
+"""
+
+def convert_one(mol_path, outdir=None):
+    if not mol_path.lower().endswith(".mol"):
+        print(f"[skip] Not a .mol file: {mol_path}")
+        return False
+    if not os.path.isfile(mol_path):
+        print(f"[err ] File not found: {mol_path}")
+        return False
+
+    base = os.path.splitext(os.path.basename(mol_path))[0]
+    out_dir = outdir if outdir else os.path.dirname(mol_path) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    xyz_path = os.path.join(out_dir, base + ".xyz")
+
+    atoms = read(mol_path)
+    write(xyz_path, atoms)
+    print(f"[ok  ] {mol_path} -> {xyz_path}")
+    return True
+
+def main():
+    if len(sys.argv) < 2:
+        print(USAGE)
+        sys.exit(1)
+
+    args = sys.argv[1:]
+    targets = []
+
+    for a in args:
+        if os.path.isdir(a):
+            targets.extend(sorted(glob.glob(os.path.join(a, "*.mol"))))
+        else:
+            expanded = sorted(glob.glob(a))
+            if expanded:
+                targets.extend(expanded)
+            else:
+                targets.append(a)
+
+    if not targets:
+        print("[err ] No input files found.")
+        sys.exit(1)
+
+    n_ok = 0
+    for t in targets:
+        try:
+            if convert_one(t):
+                n_ok += 1
+        except Exception as e:
+            print(f"[err ] Failed converting {t}: {e}")
+
+    if n_ok == 0:
+        sys.exit(2)
+
+if __name__ == "__main__":
+    main()
