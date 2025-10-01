@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Loop through all .com files in the current directory
+for comfile in ./*.com; do
+    # Submit each job using g16_run_id, which wraps sbatch itself
+    bash g16_run_id "$comfile"
+done
