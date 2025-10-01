@@ -1,0 +1,81 @@
+#!/bin/bash
+# working directory
+work_dir=`pwd`
+user_name=`whoami`
+
+# check for absolute path for command file
+comloc=`dirname $1`
+comfile=`basename $1`
+# remove .com from file
+combase=`echo $comfile|cut -d . -f 1 -`
+
+/usr/bin/sbatch  << EOF
+#!/bin/bash
+####### Job submission for Fen2
+#SBATCH --partition=main         # Partition (job queue)
+#SBATCH --job-name=Gaussian          # Assign an 8-character name to your job
+#SBATCH --nodes=1                  # Number of nodes
+#SBATCH --ntasks=28                # Number of tasks (usually = cores) on each node
+#SBATCH --mem=120000                # Real memory required (MB)
+#SBATCH --time=72:00:00            # Total run time limit (HH:MM:SS)
+#SBATCH --output=slurm.%N.%j.out      # STDOUT output file
+#SBATCH --error=slurm.%N.%j.out       # STDERR output file
+#SBATCH --export=ALL               # Export you current env to the job env
+#SBATCH --mail-user=lwg17@scarletmail.rutgers.edu   # Email
+#SBATCH --mail-type=END                             # Send email only when the job is finished
+#SBATCH --requeue
+
+
+# ---- Queue/wait-time logging (single CSV in your home) ----
+export SLURM_QUEUE_LOG="$HOME/slurm_wait_times.csv"
+export LOG_ON_EXIT=1
+source "$HOME/bin/slurm_queue_logger.sh" 2>/dev/null || echo "[warn] logger not found at $HOME/bin/slurm_queue_logger.sh"
+
+
+# find number of requested processors
+npp=`grep -i nproc $1 | awk -F = '{print$2}'`
+if [ "$npp" = "" ];
+then
+        npp=1
+elif [ $npp -gt 24 ];
+then
+        echo "Number of cores greater than 24. Please correct."
+        exit
+fi
+echo "Number of cores set to: "$npp
+
+# find check file name
+chkfile=`grep -i chk $1 | awk -F = '{print$2}'`
+
+fixchk=`echo $chkfile|cut -d . -f 1 -`.chk
+echo "Check file requested: "$fixchk
+
+# get old checkfile
+if [ "$chkfile" = "" ];
+then
+        echo "No checkfile request."
+else
+        if [ -e $work_dir/$fixchk ];
+        then
+                echo "Copy in checkfile"
+                cp $work_dir/$fixchk  .
+        fi
+fi
+
+g16  $1
+
+if [ "$chkfile" = "" ];
+then
+        echo "No checkfile request."
+else
+        if [ -e $fixchk ];
+        then
+                echo "Copy out checkfile"
+                cp $fixchk $work_dir
+        fi
+fi
+
+hostname
+data
+EOF
+
