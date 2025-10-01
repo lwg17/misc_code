@@ -1,9 +1,0 @@
-#!/bin/bash
-
-# Run pyscf_run on all .py files in the current directory
-for file in *.py; do
-  [ -e "$file" ] || continue  # Skip if no .py files found
-
-  echo "Calling pyscf_run_id for $file"
-  bash pyscf_run_id "$file"
-done
