@@ -19,20 +19,21 @@ T = 0.01 # finite temperature
 
 # Set up the system
 basis = 'sto6g'
-#R_b = float(os.environ.get("R_b", "1.00"))
-R_b = 4.0
+R_b = float(os.environ.get("R_b", "1.00"))
+#R_b = 1.0
 R=R_b * 0.529177249
 r = round(R,1)
 cell = gto.Cell()
 X = 30
-Y = 30
-
+Y = X
+x = 0
+y = x
 cell.unit = 'Angstrom' #Is already this by default, added for clarity
 cell.a    = f"""{X}    0.0    0.0
                 0.0    {Y}    0.0
                 0.0    0.0    {2*R} """
-cell.atom = f""" H {X/2}    {Y/2}    {R/2}
-                H {X/2}    {Y/2}    {3*R/2} """
+cell.atom = f""" H {x}    {y}    {R/2}
+                H {x}    {y}    {3*R/2} """
 cell.basis = basis
 cell.verbose = 5
 cell.precision = 1e-12
@@ -45,8 +46,10 @@ kpts = Lat.kpts
 
 #sets names for chkfile for r
 fn_r = f"{fileroot}_r{r}.chk"
+fn_dr = f"{fileroot}_dmet_r{r}.chk"
 #searches for r-based chkfile
 chk_r = os.path.isfile(os.path.join(current_directory, fn_r))
+chk_dr = os.path.isfile(os.path.join(current_directory, fn_dr))
 # Density fitting
 exxdiv = None
 gdf_fname = f"gdf_ints_{fileroot}_r{r}.h5" #add {os.getpid()} to run multiple in parallel
@@ -122,8 +125,13 @@ mydmet.beta = beta
 mydmet.bath_power = 1
 mydmet.fit_method = 'CG'
 mydmet.fit_kwargs = {"test_grad": True}
-mydmet.init_guess = f"{fileroot}_dmet_r{r}.chk" 
-mydmet.chkfile = f"{fileroot}_dmet_r{r}.chk" 
+if chk_r is True:               #looks for chkfile for same script and same k value
+    chkfile = fn_dr              
+    mydmet.init_guess = 'chkfile'  #if present, sets initial guess to that chkfile
+else:                           #if no applicable chkfiles exist, sets the initial guess otherwise
+    mydmet.init_guess = 'vsap'               #'minao' as other option
+    print("No chkfile available.")
+mydmet.chkfile = fn_dr
 mydmet.kernel()
 #build density matrix from dmet calculations
 dm = mydmet.rdm1_glob
@@ -181,7 +189,7 @@ else:
 e_tot_mf = kmf.e_tot              # total MF energy (electronic + nuclear)
 e_nuc    = cell.energy_nuc()      # nuclear energy from PySCF
 e_elec_mf = e_tot_mf - e_nuc      # electronic-only part
-print(f"{R_b} {e_elec_mf} {e_nuc} {e_tot_mf}")
+print(f"{R_b} {e_elec_mf/2} {e_nuc/2} {e_tot_mf/2}")
 
 
 e_nuc        = mydmet.h0              # same as KMF nuclear
