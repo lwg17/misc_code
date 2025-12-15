@@ -19,8 +19,8 @@ T = 0.01 # finite temperature
 
 # Set up the system
 basis = 'sto6g'
-R_b = float(os.environ.get("R_b", "1.00"))
-#R_b = 1.0
+#R_b = float(os.environ.get("R_b", "1.00"))
+R_b = 3.0
 R=R_b * 0.529177249
 r = round(R,1)
 cell = gto.Cell()
@@ -119,7 +119,7 @@ res = mydmet.solve_mf(return_mu=True)
 ft_mu = res[-1]
 
 #mydmet.calc_e_tot = False
-#mydmet.max_cycle = 5
+mydmet.max_cycle = 5
 mydmet.mu_glob = np.array(ft_mu, dtype=float)
 mydmet.beta = beta
 mydmet.bath_power = 1
