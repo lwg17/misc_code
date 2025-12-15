@@ -119,7 +119,7 @@ res = mydmet.solve_mf(return_mu=True)
 ft_mu = res[-1]
 
 #mydmet.calc_e_tot = False
-#mydmet.max_cycle = 5
+mydmet.max_cycle = 50
 mydmet.mu_glob = np.array(ft_mu, dtype=float)
 mydmet.beta = beta
 mydmet.bath_power = 1
